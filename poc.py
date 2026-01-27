@@ -22,7 +22,7 @@ class ShotDetector:
         #self.cap = cv2.VideoCapture(1)
 
         # Use video - replace text with your video path
-        self.cap = cv2.VideoCapture("no1.mp4")
+        self.cap = cv2.VideoCapture("myowntest.mp4")
 
         self.ball_pos = []  # array of tuples ((x_pos, y_pos), frame count, width, height, conf)
         self.hoop_pos = []  # array of tuples ((x_pos, y_pos), frame count, width, height, conf)
