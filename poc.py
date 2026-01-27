@@ -19,10 +19,10 @@ class ShotDetector:
         self.class_names = ['Basketball', 'Basketball Hoop']
         self.device = get_device()
         # Uncomment line below to use webcam (I streamed to my iPhone using Iriun Webcam)
-       # self.cap = cv2.VideoCapture(0)
+        #self.cap = cv2.VideoCapture(1)
 
         # Use video - replace text with your video path
-        self.cap = cv2.VideoCapture("test.mp4")
+        self.cap = cv2.VideoCapture("no1.mp4")
 
         self.ball_pos = []  # array of tuples ((x_pos, y_pos), frame count, width, height, conf)
         self.hoop_pos = []  # array of tuples ((x_pos, y_pos), frame count, width, height, conf)
