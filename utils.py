@@ -14,37 +14,23 @@ def get_device():
 
 
 def score(ball_pos, hoop_pos):
-    x = []
-    y = []
-    rim_height = hoop_pos[-1][0][1] - 0.5 * hoop_pos[-1][3]
+    if len(ball_pos) == 0 or len(hoop_pos) == 0:
+        return False
 
-    # Get first point above rim and first point below rim
-    for i in reversed(range(len(ball_pos))):
-        if ball_pos[i][0][1] < rim_height:
-            x.append(ball_pos[i][0][0])
-            y.append(ball_pos[i][0][1])
-            if i + 1 < len(ball_pos):
-                x.append(ball_pos[i + 1][0][0])
-                y.append(ball_pos[i + 1][0][1])
-            break
+    rim_center_x = hoop_pos[-1][0][0]
+    rim_center_y = hoop_pos[-1][0][1] - 0.5 * hoop_pos[-1][3]
+    rim_half_width = 0.45 * hoop_pos[-1][2]
+    rim_band = 0.3 * hoop_pos[-1][3]
 
-    # Create line from two points
-    if len(x) > 1:
-        m, b = np.polyfit(x, y, 1)
-        predicted_x = ((hoop_pos[-1][0][1] - 0.5 * hoop_pos[-1][3]) - b) / m
-        rim_x1 = hoop_pos[-1][0][0] - 0.4 * hoop_pos[-1][2]
-        rim_x2 = hoop_pos[-1][0][0] + 0.4 * hoop_pos[-1][2]
-
-        # Check if predicted path crosses the rim area (including rebound zone)
-        if rim_x1 < predicted_x < rim_x2:
-            return True
-        # Check if ball enters rebound zone near the hoop
-        hoop_rebound_zone = 10  # Define a buffer zone around the hoop
-        if rim_x1 - hoop_rebound_zone < predicted_x < rim_x2 + hoop_rebound_zone:
-            return True
+    # Check recent points for entry through rim window
+    recent_points = ball_pos[-15:]
+    for center, _, _, _, _ in recent_points:
+        x, y = center
+        if (rim_center_x - rim_half_width) < x < (rim_center_x + rim_half_width):
+            if (rim_center_y - rim_band) < y < (rim_center_y + rim_band):
+                return True
 
     return False
-
 
 # Detects if the ball is below the net - used to detect shot attempts
 def detect_down(ball_pos, hoop_pos):
