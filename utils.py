@@ -46,17 +46,14 @@ def detect_down(ball_pos, hoop_pos):
 
 
 def detect_up(ball_pos, hoop_pos):
-    """
-    FIXED: Tighter detection zone to avoid double-counting
-    Ball must be in the region above and around the hoop
-    """
-    # CHANGED: Narrower horizontal range (4x -> 2x hoop width)
+ 
+    # Narrower horizontal range 
     x1 = hoop_pos[-1][0][0] - 2 * hoop_pos[-1][2]
     x2 = hoop_pos[-1][0][0] + 2 * hoop_pos[-1][2]
     
-    # CHANGED: Higher minimum (starts higher up)
-    y1 = hoop_pos[-1][0][1] - 2.5 * hoop_pos[-1][3]  # Changed from -2
-    y2 = hoop_pos[-1][0][1] - 0.3 * hoop_pos[-1][3]  # Changed from -0.5
+    # Higher minimum 
+    y1 = hoop_pos[-1][0][1] - 2.5 * hoop_pos[-1][3]  
+    y2 = hoop_pos[-1][0][1] - 0.3 * hoop_pos[-1][3]  
 
     if x1 < ball_pos[-1][0][0] < x2 and y1 < ball_pos[-1][0][1] < y2:
         return True
