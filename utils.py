@@ -14,17 +14,21 @@ def get_device():
 
 
 def score(ball_pos, hoop_pos):
+    
     if len(ball_pos) == 0 or len(hoop_pos) == 0:
         return False
 
     rim_center_x = hoop_pos[-1][0][0]
     rim_center_y = hoop_pos[-1][0][1] - 0.5 * hoop_pos[-1][3]
-    rim_half_width = 0.45 * hoop_pos[-1][2]
-    rim_band = 0.3 * hoop_pos[-1][3]
+    
+    # Scoring window - slightly more lenient
+    rim_half_width = 0.55 * hoop_pos[-1][2]  # Increased from 0.45
+    rim_band = 0.5 * hoop_pos[-1][3]  # Increased from 0.3
 
-    # Check recent points for entry through rim window
-    recent_points = ball_pos[-15:]
-    for center, _, _, _, _ in recent_points:
+    # Check all recent points
+    recent_points = ball_pos[-30:] if len(ball_pos) >= 30 else ball_pos
+    
+    for center, frame_num, _, _, _ in recent_points:
         x, y = center
         if (rim_center_x - rim_half_width) < x < (rim_center_x + rim_half_width):
             if (rim_center_y - rim_band) < y < (rim_center_y + rim_band):
@@ -32,28 +36,35 @@ def score(ball_pos, hoop_pos):
 
     return False
 
-# Detects if the ball is below the net - used to detect shot attempts
+
 def detect_down(ball_pos, hoop_pos):
+    """Ball is below the bottom of the hoop"""
     y = hoop_pos[-1][0][1] + 0.5 * hoop_pos[-1][3]
     if ball_pos[-1][0][1] > y:
         return True
     return False
 
 
-# Detects if the ball is around the backboard - used to detect shot attempts
 def detect_up(ball_pos, hoop_pos):
-    x1 = hoop_pos[-1][0][0] - 4 * hoop_pos[-1][2]
-    x2 = hoop_pos[-1][0][0] + 4 * hoop_pos[-1][2]
-    y1 = hoop_pos[-1][0][1] - 2 * hoop_pos[-1][3]
-    y2 = hoop_pos[-1][0][1]
+    """
+    FIXED: Tighter detection zone to avoid double-counting
+    Ball must be in the region above and around the hoop
+    """
+    # CHANGED: Narrower horizontal range (4x -> 2x hoop width)
+    x1 = hoop_pos[-1][0][0] - 2 * hoop_pos[-1][2]
+    x2 = hoop_pos[-1][0][0] + 2 * hoop_pos[-1][2]
+    
+    # CHANGED: Higher minimum (starts higher up)
+    y1 = hoop_pos[-1][0][1] - 2.5 * hoop_pos[-1][3]  # Changed from -2
+    y2 = hoop_pos[-1][0][1] - 0.3 * hoop_pos[-1][3]  # Changed from -0.5
 
-    if x1 < ball_pos[-1][0][0] < x2 and y1 < ball_pos[-1][0][1] < y2 - 0.5 * hoop_pos[-1][3]:
+    if x1 < ball_pos[-1][0][0] < x2 and y1 < ball_pos[-1][0][1] < y2:
         return True
     return False
 
 
-# Checks if center point is near the hoop
 def in_hoop_region(center, hoop_pos):
+    """Checks if center point is near the hoop"""
     if len(hoop_pos) < 1:
         return False
     x = center[0]
@@ -69,32 +80,27 @@ def in_hoop_region(center, hoop_pos):
     return False
 
 
-# Removes inaccurate data points
 def clean_ball_pos(ball_pos, frame_count):
-    # Removes inaccurate ball size to prevent jumping to wrong ball
+    """Removes inaccurate data points"""
     if len(ball_pos) > 1:
-        # Width and Height
         w1 = ball_pos[-2][2]
         h1 = ball_pos[-2][3]
         w2 = ball_pos[-1][2]
         h2 = ball_pos[-1][3]
 
-        # X and Y coordinates
         x1 = ball_pos[-2][0][0]
         y1 = ball_pos[-2][0][1]
         x2 = ball_pos[-1][0][0]
         y2 = ball_pos[-1][0][1]
 
-        # Frame count
         f1 = ball_pos[-2][1]
         f2 = ball_pos[-1][1]
         f_dif = f2 - f1
 
         dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
         max_dist = 4 * math.sqrt((w1) ** 2 + (h1) ** 2)
 
-        # Ball should not move a 4x its diameter within 5 frames
+        # Ball should not move 4x its diameter within 5 frames
         if (dist > max_dist) and (f_dif < 5):
             ball_pos.pop()
 
@@ -102,16 +108,16 @@ def clean_ball_pos(ball_pos, frame_count):
         elif (w2*1.4 < h2) or (h2*1.4 < w2):
             ball_pos.pop()
 
-    # Remove points older than 30 frames
+    # Keep longer history for better scoring
     if len(ball_pos) > 0:
-        if frame_count - ball_pos[0][1] > 30:
+        if frame_count - ball_pos[0][1] > 50:  # Increased from 30
             ball_pos.pop(0)
 
     return ball_pos
 
 
 def clean_hoop_pos(hoop_pos):
-    # Prevents jumping from one hoop to another
+    """Prevents jumping from one hoop to another"""
     if len(hoop_pos) > 1:
         x1 = hoop_pos[-2][0][0]
         y1 = hoop_pos[-2][0][1]
@@ -125,11 +131,9 @@ def clean_hoop_pos(hoop_pos):
 
         f1 = hoop_pos[-2][1]
         f2 = hoop_pos[-1][1]
-
-        f_dif = f2-f1
+        f_dif = f2 - f1
 
         dist = math.sqrt((x2-x1)**2 + (y2-y1)**2)
-
         max_dist = 0.5 * math.sqrt(w1 ** 2 + h1 ** 2)
 
         # Hoop should not move 0.5x its diameter within 5 frames
