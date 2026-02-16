@@ -71,9 +71,9 @@ class ShotDetector:
         self.pose_points = {}
 
         # Data tracking for CSV export
-        self.frame_data = []  # Store data for every frame
-        self.shot_data = []   # Store data for each shot
-        self.current_shot_frames = []  # Track frames during current shot
+        self.frame_data = []  
+        self.shot_data = []   
+        self.current_shot_frames = []  
 
         # Track if we're currently tracking a shot
         self.tracking_shot = False
@@ -199,7 +199,7 @@ class ShotDetector:
             cv2.circle(self.frame, self.hoop_pos[-1][0], 2, (128, 128, 0), 2)
 
     def calculate_angle(self, p1, p2, p3):
-        """Calculate angle between three points (p1-p2-p3)"""
+        """Calculate angle between three points"""
         v1 = p1 - p2
         v2 = p3 - p2
         cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
@@ -210,7 +210,7 @@ class ShotDetector:
         return np.linalg.norm(p1 - p2)
 
     def calculate_shot_metrics(self):
-        """Calculate comprehensive biomechanical metrics for XGBoost training"""
+        
         if not self.current_shot_frames:
             return {}
         
@@ -483,20 +483,20 @@ class ShotDetector:
                     writer.writeheader()
                 writer.writerows(self.shot_data)
             
-            print(f"✓ Shot data appended to {shot_csv}")
-            print(f"  Session: {session_id}")
-            print(f"  Shots this session: {len(self.shot_data)}")
-            print(f"  Makes: {self.makes}")
-            print(f"  Shooting percentage: {self.makes/self.attempts*100:.1f}%")
+            print(f"Shot data appended to {shot_csv}")
+            print(f"Session: {session_id}")
+            print(f"Shots this session: {len(self.shot_data)}")
+            print(f"Makes: {self.makes}")
+            print(f"Shooting percentage: {self.makes/self.attempts*100:.1f}%")
         
-        # Export frame-by-frame data for this session only
+        # Export frame-by-frame data for this session
         if self.frame_data:
             frame_csv = f'session_frames_{session_id}.csv'
             with open(frame_csv, 'w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=self.frame_data[0].keys())
                 writer.writeheader()
                 writer.writerows(self.frame_data)
-            print(f"✓ Frame data saved to {frame_csv}")
+            print(f"Frame data saved to {frame_csv}")
         
         print("\n=== Export Complete ===")
 

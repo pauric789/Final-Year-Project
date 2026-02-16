@@ -22,8 +22,8 @@ def score(ball_pos, hoop_pos):
     rim_center_y = hoop_pos[-1][0][1] - 0.5 * hoop_pos[-1][3]
     
     # Scoring window - slightly more lenient
-    rim_half_width = 0.55 * hoop_pos[-1][2]  # Increased from 0.45
-    rim_band = 0.5 * hoop_pos[-1][3]  # Increased from 0.3
+    rim_half_width = 0.55 * hoop_pos[-1][2]  
+    rim_band = 0.5 * hoop_pos[-1][3]  
 
     # Check all recent points
     recent_points = ball_pos[-30:] if len(ball_pos) >= 30 else ball_pos
