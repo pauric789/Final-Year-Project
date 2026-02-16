@@ -103,13 +103,13 @@ class ShotDetector:
                     current_class = self.class_names[cls]
                     center = (x1 + w // 2, y1 + h // 2)
 
-                    if (conf > .3 or (in_hoop_region(center, self.hoop_pos) and conf > 0.15)) \
+                    if (conf > .1 or (in_hoop_region(center, self.hoop_pos) and conf > 0.1)) \
                             and current_class == "Basketball":
                         self.ball_pos.append((center, self.frame_count, w, h, conf))
                         frame_ball_pos = center
                         cvzone.cornerRect(self.frame, (x1, y1, w, h))
 
-                    if conf > .5 and current_class == "Basketball Hoop":
+                    if conf > .1 and current_class == "Basketball Hoop":
                         self.hoop_pos.append((center, self.frame_count, w, h, conf))
                         frame_hoop_pos = center
                         cvzone.cornerRect(self.frame, (x1, y1, w, h))
