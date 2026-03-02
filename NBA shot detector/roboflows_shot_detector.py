@@ -34,7 +34,7 @@ except ImportError:
 
 class Config:
     # Video and Models
-    VIDEO_PATH = "ncaa.mp4"
+    VIDEO_PATH = "pp.mp4"
     MODEL_PATH = "best copy.pt"  # Single YOLO model for everything
     
     # Class IDs from the model:
