@@ -6,11 +6,11 @@ import mediapipe as mp
 import numpy as np
 import csv
 from datetime import datetime
-from utils import detect_down, detect_up, in_hoop_region, clean_hoop_pos, clean_ball_pos, get_device, score
+from utils import detect_down, detect_up, in_hoop_region, clean_hoop_pos, clean_ball_pos, get_device, score, calculate_angle, calculate_distance
 
 
 class ShotDetector:
-    def __init__(self, video_path="pp.mp4", model_path="best.pt"):
+    def __init__(self, video_path="cutmyvid.mp4", model_path="best.pt"):
         self.model = YOLO(model_path) 
         self.class_names = ['Basketball', 'Basketball Hoop']
         self.device = get_device()
@@ -161,16 +161,7 @@ class ShotDetector:
             self.hoop_pos = clean_hoop_pos(self.hoop_pos)
             cv2.circle(self.frame, self.hoop_pos[-1][0], 2, (128, 128, 0), 2)
 
-    def calculate_angle(self, p1, p2, p3):
-        """Calculate angle between three points"""
-        v1 = p1 - p2
-        v2 = p3 - p2
-        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
-        return np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))
-    
-    def calculate_distance(self, p1, p2):
-        """Calculate Euclidean distance between two points"""
-        return np.linalg.norm(p1 - p2)
+
 
     def calculate_shot_metrics(self):
         
@@ -201,12 +192,12 @@ class ShotDetector:
                 wrist = np.array([release_frame['RIGHT_WRIST_x'], release_frame['RIGHT_WRIST_y']])
                 elbow = np.array([release_frame['RIGHT_ELBOW_x'], release_frame['RIGHT_ELBOW_y']])
                 shoulder = np.array([release_frame['RIGHT_SHOULDER_x'], release_frame['RIGHT_SHOULDER_y']])
-                metrics['right_elbow_angle'] = self.calculate_angle(wrist, elbow, shoulder)
+                metrics['right_elbow_angle'] = calculate_angle(wrist, elbow, shoulder)
             
             # Right shoulder angle 
             if all(k in release_frame and release_frame[k] is not None for k in 
                    ['RIGHT_WRIST_x', 'RIGHT_ELBOW_x', 'RIGHT_SHOULDER_x']):
-                metrics['right_shoulder_angle'] = self.calculate_angle(shoulder, elbow, wrist)
+                metrics['right_shoulder_angle'] = calculate_angle(shoulder, elbow, wrist)
             
             # Right wrist extension
             if all(k in release_frame and release_frame[k] is not None for k in 
@@ -219,7 +210,7 @@ class ShotDetector:
                 l_wrist = np.array([release_frame['LEFT_WRIST_x'], release_frame['LEFT_WRIST_y']])
                 l_elbow = np.array([release_frame['LEFT_ELBOW_x'], release_frame['LEFT_ELBOW_y']])
                 l_shoulder = np.array([release_frame['LEFT_SHOULDER_x'], release_frame['LEFT_SHOULDER_y']])
-                metrics['left_elbow_angle'] = self.calculate_angle(l_wrist, l_elbow, l_shoulder)
+                metrics['left_elbow_angle'] = calculate_angle(l_wrist, l_elbow, l_shoulder)
             
             
             # Right knee angle
@@ -228,7 +219,7 @@ class ShotDetector:
                 r_hip = np.array([release_frame['RIGHT_HIP_x'], release_frame['RIGHT_HIP_y']])
                 r_knee = np.array([release_frame['RIGHT_KNEE_x'], release_frame['RIGHT_KNEE_y']])
                 r_ankle = np.array([release_frame['RIGHT_ANKLE_x'], release_frame['RIGHT_ANKLE_y']])
-                metrics['right_knee_angle'] = self.calculate_angle(r_hip, r_knee, r_ankle)
+                metrics['right_knee_angle'] = calculate_angle(r_hip, r_knee, r_ankle)
             
             # Left knee angle
             if all(k in release_frame and release_frame[k] is not None for k in 
@@ -236,7 +227,7 @@ class ShotDetector:
                 l_hip = np.array([release_frame['LEFT_HIP_x'], release_frame['LEFT_HIP_y']])
                 l_knee = np.array([release_frame['LEFT_KNEE_x'], release_frame['LEFT_KNEE_y']])
                 l_ankle = np.array([release_frame['LEFT_ANKLE_x'], release_frame['LEFT_ANKLE_y']])
-                metrics['left_knee_angle'] = self.calculate_angle(l_hip, l_knee, l_ankle)
+                metrics['left_knee_angle'] = calculate_angle(l_hip, l_knee, l_ankle)
             
             # Hip angle 
             if all(k in release_frame and release_frame[k] is not None for k in 
@@ -244,7 +235,7 @@ class ShotDetector:
                 r_hip = np.array([release_frame['RIGHT_HIP_x'], release_frame['RIGHT_HIP_y']])
                 shoulder = np.array([release_frame['RIGHT_SHOULDER_x'], release_frame['RIGHT_SHOULDER_y']])
                 r_knee = np.array([release_frame['RIGHT_KNEE_x'], release_frame['RIGHT_KNEE_y']])
-                metrics['right_hip_angle'] = self.calculate_angle(shoulder, r_hip, r_knee)
+                metrics['right_hip_angle'] = calculate_angle(shoulder, r_hip, r_knee)
             
             
             # Shoulder alignment 
@@ -285,7 +276,7 @@ class ShotDetector:
                 # Total distance to hoop
                 ball_pos = np.array([release_frame['ball_x'], release_frame['ball_y']])
                 hoop_pos = np.array([release_frame['hoop_x'], release_frame['hoop_y']])
-                metrics['ball_hoop_total_distance'] = self.calculate_distance(ball_pos, hoop_pos)
+                metrics['ball_hoop_total_distance'] = calculate_distance(ball_pos, hoop_pos)
                 
                 # Release angle relative to hoop
                 if release_frame['ball_y'] != release_frame['hoop_y']:
@@ -303,7 +294,7 @@ class ShotDetector:
                         pre_hip = np.array([pre_release_frame['RIGHT_HIP_x'], pre_release_frame['RIGHT_HIP_y']])
                         pre_knee = np.array([pre_release_frame['RIGHT_KNEE_x'], pre_release_frame['RIGHT_KNEE_y']])
                         pre_ankle = np.array([pre_release_frame['RIGHT_ANKLE_x'], pre_release_frame['RIGHT_ANKLE_y']])
-                        pre_knee_angle = self.calculate_angle(pre_hip, pre_knee, pre_ankle)
+                        pre_knee_angle = calculate_angle(pre_hip, pre_knee, pre_ankle)
                         
                         if 'right_knee_angle' in metrics:
                             metrics['knee_extension'] = metrics['right_knee_angle'] - pre_knee_angle
@@ -319,7 +310,7 @@ class ShotDetector:
                     pre_wrist = np.array([pre_release_frame['RIGHT_WRIST_x'], pre_release_frame['RIGHT_WRIST_y']])
                     pre_elbow = np.array([pre_release_frame['RIGHT_ELBOW_x'], pre_release_frame['RIGHT_ELBOW_y']])
                     pre_shoulder = np.array([pre_release_frame['RIGHT_SHOULDER_x'], pre_release_frame['RIGHT_SHOULDER_y']])
-                    pre_elbow_angle = self.calculate_angle(pre_wrist, pre_elbow, pre_shoulder)
+                    pre_elbow_angle = calculate_angle(pre_wrist, pre_elbow, pre_shoulder)
                     
                     if 'right_elbow_angle' in metrics:
                         metrics['elbow_extension'] = metrics['right_elbow_angle'] - pre_elbow_angle

@@ -2,6 +2,19 @@ import math
 import numpy as np
 import torch
 
+
+def calculate_angle(p1, p2, p3):
+    """Calculate angle between three points"""
+    v1 = p1 - p2
+    v2 = p3 - p2
+    cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+    return np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))
+
+
+def calculate_distance(p1, p2):
+    """Calculate Euclidean distance between two points"""
+    return np.linalg.norm(p1 - p2)
+
 def get_device():
     """Automatically select devices -> mps（Mac） -> cpu"""
     if torch.cuda.is_available():
