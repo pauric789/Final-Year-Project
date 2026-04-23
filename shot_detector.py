@@ -1,15 +1,14 @@
 from ultralytics import YOLO
 import cv2
 import cvzone
-import math
 import mediapipe as mp
 import numpy as np
-import csv
 import joblib
 import pandas as pd
 import threading
+import subprocess
+import shutil
 from xgboost import XGBClassifier
-from datetime import datetime
 from utils import detect_down, detect_up, in_hoop_region, clean_hoop_pos, clean_ball_pos, get_device, score, calculate_angle, calculate_distance
 
 
@@ -20,7 +19,8 @@ class ShotDetector:
         self.class_names = ['Basketball', 'Basketball Hoop']
         self.device = get_device()
 
-        self.cap = cv2.VideoCapture("cutmyvid.mp4")
+        # self.cap = cv2.VideoCapture(0) 
+        self.cap = cv2.VideoCapture("test.mp4")
         self.ball_pos = []
         self.hoop_pos = []
         self.frame_count = 0
@@ -60,20 +60,10 @@ class ShotDetector:
         self.xgb_display_frames = 60      # how many frames to show prediction
         self._pending_metrics = {}
 
-        # Audio prediction (optional): uses local system voice via pyttsx3.
-        self.tts_enabled = False
-        self.tts_engine = None
-        self.tts_lock = threading.Lock()
+        # Audio prediction — uses PowerShell's built-in speech synthesis
+        # instead of pyttsx3 (which breaks after one call when threaded).
+        self.tts_enabled = True
         self.last_spoken_prediction = ""
-
-        try:
-            import pyttsx3
-            self.tts_engine = pyttsx3.init()
-            self.tts_engine.setProperty("rate", 190)
-            self.tts_enabled = True
-            print("Text-to-speech enabled for prediction audio.")
-        except Exception as e:
-            print(f"Text-to-speech unavailable (install pyttsx3): {e}")
 
         # Load XGBoost model and feature names
         try:
@@ -115,8 +105,7 @@ class ShotDetector:
         ]
         self.pose_points = {}
 
-        # Data tracking for CSV export
-        self.shot_data = []
+        # Data tracking for per-shot metrics
         self.current_shot_frames = []
 
         # Track if currently tracking a shot
@@ -183,7 +172,6 @@ class ShotDetector:
 
         self.cap.release()
         cv2.destroyAllWindows()
-        self.export_to_csv()
 
     # ------------------------------------------------------------------
     # Frame data builder
@@ -243,8 +231,8 @@ class ShotDetector:
         self.speak_prediction(prob)
 
     def speak_prediction(self, prob):
-        """Speak prediction in a background thread so video loop stays responsive."""
-        if not self.tts_enabled or self.tts_engine is None:
+        """Speak prediction using eSpeak in a background thread."""
+        if not self.tts_enabled:
             return
 
         label = "make" if prob >= 0.5 else "miss"
@@ -256,12 +244,31 @@ class ShotDetector:
         self.last_spoken_prediction = phrase
 
         def _speak():
-            with self.tts_lock:
-                try:
-                    self.tts_engine.say(phrase)
-                    self.tts_engine.runAndWait()
-                except Exception as e:
-                    print(f"[TTS] Speech failed: {e}")
+            try:
+                tts_cmd = None
+                candidates = [
+                    "espeak-ng",
+                    "espeak",
+                    r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+                    r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+                    r"C:\Program Files\eSpeak\command_line\espeak.exe",
+                    r"C:\Program Files (x86)\eSpeak\command_line\espeak.exe",
+                ]
+
+                for candidate in candidates:
+                    resolved = shutil.which(candidate)
+                    if resolved:
+                        tts_cmd = resolved
+                        break
+
+                if tts_cmd is None:
+                    print("[TTS] eSpeak not found. Install espeak-ng or espeak and ensure it is in PATH.")
+                    return
+
+                print(f"[TTS] Speaking '{phrase}' via: {tts_cmd}")
+                subprocess.run([tts_cmd, "-a", "180", "-s", "160", phrase], check=False)
+            except Exception as e:
+                print(f"[TTS] Speech failed: {e}")
 
         threading.Thread(target=_speak, daemon=True).start()
 
@@ -271,53 +278,71 @@ class ShotDetector:
             return
 
         prob = self.xgb_prediction_prob if self.xgb_prediction_prob is not None else 0.5
-
-        # Colour: green = confident make, red = confident miss, yellow = uncertain
-        if prob >= 0.65:
-            color = (0, 220, 0)
-        elif prob <= 0.35:
-            color = (0, 60, 255)
-        else:
-            color = (0, 200, 255)
-
-        text = self.xgb_prediction_text
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = 1.4
-        thickness = 3
-        (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
-
-        h_frame = self.frame.shape[0]
-        x, y = 40, h_frame - 50
-        pad = 10
-
-        # Semi-transparent dark background pill
-        overlay = self.frame.copy()
-        cv2.rectangle(overlay,
-                      (x - pad, y - th - pad),
-                      (x + tw + pad, y + baseline + pad),
-                      (20, 20, 20), -1)
         alpha_factor = self.xgb_display_counter / self.xgb_display_frames
-        cv2.addWeighted(overlay, 0.55 * alpha_factor,
-                        self.frame, 1 - 0.55 * alpha_factor, 0, self.frame)
 
-        # Confidence bar below the text
-        bar_x = x - pad
-        bar_y = y + baseline + pad + 4
-        bar_w = tw + 2 * pad
-        bar_h = 8
-        cv2.rectangle(self.frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (60, 60, 60), -1)
-        cv2.rectangle(self.frame, (bar_x, bar_y),
-                      (bar_x + int(bar_w * prob), bar_y + bar_h), color, -1)
+        # Colour gradient: green = confident make, red = confident miss, amber = uncertain
+        if prob >= 0.65:
+            color = (72, 220, 80)       # green
+            bg_accent = (30, 80, 35)
+        elif prob <= 0.35:
+            color = (80, 80, 255)       # red
+            bg_accent = (40, 30, 80)
+        else:
+            color = (60, 200, 255)      # amber
+            bg_accent = (30, 70, 80)
 
-        # Text with shadow for readability
-        cv2.putText(self.frame, text, (x, y), font, scale, (0, 0, 0), thickness + 2)
-        cv2.putText(self.frame, text, (x, y), font, scale, color, thickness)
+        label = "MAKE" if prob >= 0.5 else "MISS"
+        pct_text = f"{prob * 100:.0f}%"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        h_frame, w_frame = self.frame.shape[:2]
+
+        # --- Pill badge centred at bottom ---
+        badge_w, badge_h = 280, 70
+        bx = (w_frame - badge_w) // 2
+        by = h_frame - badge_h - 25
+
+        overlay = self.frame.copy()
+        cv2.rectangle(overlay, (bx, by), (bx + badge_w, by + badge_h), bg_accent, -1)
+        cv2.addWeighted(overlay, 0.7 * alpha_factor,
+                        self.frame, 1 - 0.7 * alpha_factor, 0, self.frame)
+        cv2.rectangle(self.frame, (bx, by), (bx + badge_w, by + badge_h), color, 2)
+
+        # Label text (e.g. "MAKE")
+        cv2.putText(self.frame, label, (bx + 18, by + 45),
+                    font, 1.3, color, 3)
+
+        # Percentage text right-aligned
+        (pw, _), _ = cv2.getTextSize(pct_text, font, 1.3, 3)
+        cv2.putText(self.frame, pct_text, (bx + badge_w - pw - 18, by + 45),
+                    font, 1.3, (255, 255, 255), 3)
+
+        # Confidence bar at the bottom of the badge
+        bar_pad = 12
+        bar_y = by + badge_h - 14
+        bar_w = badge_w - 2 * bar_pad
+        bar_h = 6
+        cv2.rectangle(self.frame, (bx + bar_pad, bar_y),
+                      (bx + bar_pad + bar_w, bar_y + bar_h), (50, 50, 50), -1)
+        cv2.rectangle(self.frame, (bx + bar_pad, bar_y),
+                      (bx + bar_pad + int(bar_w * prob), bar_y + bar_h), color, -1)
 
         self.xgb_display_counter -= 1
 
     # ------------------------------------------------------------------
     # Pose processing
     # ------------------------------------------------------------------
+
+    # Skeleton connections for drawing limb lines
+    _SKELETON_CONNECTIONS = [
+        ('LEFT_SHOULDER', 'LEFT_ELBOW'), ('LEFT_ELBOW', 'LEFT_WRIST'),
+        ('RIGHT_SHOULDER', 'RIGHT_ELBOW'), ('RIGHT_ELBOW', 'RIGHT_WRIST'),
+        ('LEFT_SHOULDER', 'RIGHT_SHOULDER'),
+        ('LEFT_SHOULDER', 'LEFT_HIP'), ('RIGHT_SHOULDER', 'RIGHT_HIP'),
+        ('LEFT_HIP', 'RIGHT_HIP'),
+        ('LEFT_HIP', 'LEFT_KNEE'), ('LEFT_KNEE', 'LEFT_ANKLE'),
+        ('RIGHT_HIP', 'RIGHT_KNEE'), ('RIGHT_KNEE', 'RIGHT_ANKLE'),
+    ]
 
     def process_pose(self):
         rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
@@ -333,16 +358,41 @@ class ShotDetector:
             x = int(landmark.x * w)
             y = int(landmark.y * h)
             self.pose_points[lm.name] = (x, y, landmark.visibility)
-            cv2.circle(self.frame, (x, y), 5, (255, 200, 0), -1)
+
+        # Draw skeleton lines first (behind the dots)
+        for a, b in self._SKELETON_CONNECTIONS:
+            if a in self.pose_points and b in self.pose_points:
+                pa = self.pose_points[a]
+                pb = self.pose_points[b]
+                if pa[2] > 0.4 and pb[2] > 0.4:
+                    cv2.line(self.frame, (pa[0], pa[1]), (pb[0], pb[1]),
+                             (200, 170, 50), 2, cv2.LINE_AA)
+
+        # Draw joint dots on top
+        for name, (x, y, vis) in self.pose_points.items():
+            if vis > 0.4:
+                cv2.circle(self.frame, (x, y), 6, (30, 30, 30), -1)
+                cv2.circle(self.frame, (x, y), 4, (0, 220, 255), -1)
 
     def clean_motion(self):
         self.ball_pos = clean_ball_pos(self.ball_pos, self.frame_count)
-        for i in range(len(self.ball_pos)):
-            cv2.circle(self.frame, self.ball_pos[i][0], 2, (0, 0, 255), 2)
+
+        # Draw ball trail with fading opacity (most recent = brightest)
+        num_trail = len(self.ball_pos)
+        for i in range(num_trail):
+            fade = max(0.25, (i + 1) / num_trail)
+            radius = max(2, int(4 * fade))
+            blue = int(80 + 175 * fade)
+            green = int(50 * fade)
+            cv2.circle(self.frame, self.ball_pos[i][0], radius,
+                       (0, green, blue), -1, cv2.LINE_AA)
 
         if len(self.hoop_pos) > 1:
             self.hoop_pos = clean_hoop_pos(self.hoop_pos)
-            cv2.circle(self.frame, self.hoop_pos[-1][0], 2, (128, 128, 0), 2)
+            # Draw a small crosshair on the hoop centre
+            hx, hy = self.hoop_pos[-1][0]
+            cv2.drawMarker(self.frame, (hx, hy), (0, 255, 200), cv2.MARKER_CROSS,
+                           12, 2, cv2.LINE_AA)
 
     # ------------------------------------------------------------------
     # Shot metrics
@@ -550,22 +600,6 @@ class ShotDetector:
 
                 self.fade_counter = self.fade_frames
 
-                # Reuse cached metrics from release time
-                shot_metrics = self._pending_metrics if self._pending_metrics else self.calculate_shot_metrics()
-                shot_record = {
-                    'shot_number': self.attempts,
-                    'result': 'make' if is_make else 'miss',
-                    'xgb_make_prob': round(self.xgb_prediction_prob, 4) if self.xgb_prediction_prob is not None else None,
-                    'start_frame': self.shot_start_frame,
-                    'up_frame': self.up_frame,
-                    'down_frame': self.down_frame,
-                    'eval_frame': self.frame_count,
-                    'duration_frames': self.frame_count - self.shot_start_frame,
-                    'duration_seconds': (self.frame_count - self.shot_start_frame) / 30.0,
-                }
-                shot_record.update(shot_metrics)
-                self.shot_data.append(shot_record)
-
                 # Reset state
                 self.up = False
                 self.down = False
@@ -575,67 +609,79 @@ class ShotDetector:
                 self.current_shot_frames = []
                 self._pending_metrics = {}
                 self.early_prediction_done = False
+                self.last_spoken_prediction = ""
 
     # ------------------------------------------------------------------
     # Display helpers
     # ------------------------------------------------------------------
 
     def display_score(self):
-        text = str(self.makes) + " / " + str(self.attempts)
-        cv2.putText(self.frame, text, (50, 125),
-                    cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 6)
-        cv2.putText(self.frame, text, (50, 125),
-                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 0), 3)
+        """Draw a translucent HUD bar at the top with score and shooting %."""
+        h_frame, w_frame = self.frame.shape[:2]
+        bar_h = 60
 
-        if self.overlay_text:
-            (w, h), _ = cv2.getTextSize(self.overlay_text, cv2.FONT_HERSHEY_SIMPLEX, 3, 6)
-            x = self.frame.shape[1] - w - 40
-            y = 100
-            cv2.putText(self.frame, self.overlay_text, (x, y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 3, self.overlay_color, 6)
+        # Semi-transparent dark bar across the top
+        overlay = self.frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w_frame, bar_h), (15, 15, 15), -1)
+        cv2.addWeighted(overlay, 0.65, self.frame, 0.35, 0, self.frame)
 
-        if self.fade_counter > 0:
-            alpha = 0.2 * (self.fade_counter / self.fade_frames)
-            self.frame = cv2.addWeighted(
-                self.frame, 1 - alpha,
-                np.full_like(self.frame, self.overlay_color),
-                alpha, 0
-            )
+        # Thin accent line at the bottom of the bar
+        cv2.line(self.frame, (0, bar_h), (w_frame, bar_h), (0, 180, 255), 2)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # Score: "3 / 5" on the left
+        score_text = f"{self.makes} / {self.attempts}"
+        cv2.putText(self.frame, score_text, (20, 42),
+                    font, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+
+        # Shooting percentage on the right
+        if self.attempts > 0:
+            pct = self.makes / self.attempts * 100
+            pct_text = f"{pct:.0f}%"
+        else:
+            pct_text = "--"
+        (pw, _), _ = cv2.getTextSize(pct_text, font, 1.2, 3)
+        cv2.putText(self.frame, pct_text, (w_frame - pw - 20, 42),
+                    font, 1.2, (0, 220, 255), 3, cv2.LINE_AA)
+
+        # "SHOT TRACKER" label centred
+        label = "SHOT TRACKER"
+        (lw, _), _ = cv2.getTextSize(label, font, 0.6, 2)
+        cv2.putText(self.frame, label, ((w_frame - lw) // 2, 38),
+                    font, 0.6, (140, 140, 140), 2, cv2.LINE_AA)
+
+        # --- Make / Miss result badge (top-right, below bar) ---
+        if self.overlay_text and self.fade_counter > 0:
+            badge_text = self.overlay_text.upper()
+            alpha = self.fade_counter / self.fade_frames
+
+            badge_font_scale = 1.5
+            badge_thickness = 3
+            (bw, bh), _ = cv2.getTextSize(badge_text, font,
+                                           badge_font_scale, badge_thickness)
+            pad = 16
+            bx = w_frame - bw - pad * 2 - 15
+            by = bar_h + 15
+
+            # Pill background
+            pill_overlay = self.frame.copy()
+            cv2.rectangle(pill_overlay, (bx, by),
+                          (bx + bw + pad * 2, by + bh + pad * 2),
+                          self.overlay_color, -1)
+            cv2.addWeighted(pill_overlay, 0.55 * alpha,
+                            self.frame, 1 - 0.55 * alpha, 0, self.frame)
+            cv2.rectangle(self.frame, (bx, by),
+                          (bx + bw + pad * 2, by + bh + pad * 2),
+                          self.overlay_color, 2)
+
+            # Text
+            cv2.putText(self.frame, badge_text,
+                        (bx + pad, by + bh + pad - 2),
+                        font, badge_font_scale, (255, 255, 255),
+                        badge_thickness, cv2.LINE_AA)
+
             self.fade_counter -= 1
-
-    # ------------------------------------------------------------------
-    # CSV export
-    # ------------------------------------------------------------------
-
-    def export_to_csv(self):
-        import os
-
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        if self.shot_data:
-            shot_csv = 'all_shots.csv'
-            file_exists = os.path.isfile(shot_csv)
-
-            for shot in self.shot_data:
-                shot['session_id'] = session_id
-                shot['session_timestamp'] = timestamp
-
-            with open(shot_csv, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=self.shot_data[0].keys())
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerows(self.shot_data)
-
-            print(f"Shot data appended to {shot_csv}")
-            print(f"Session: {session_id}")
-            print(f"Shots this session: {len(self.shot_data)}")
-            print(f"Makes: {self.makes}")
-            if self.attempts > 0:
-                print(f"Shooting percentage: {self.makes / self.attempts * 100:.1f}%")
-
-        print("\n=== Export Complete ===")
-
 
 if __name__ == "__main__":
     ShotDetector()
