@@ -3,14 +3,12 @@ import cv2
 import cvzone
 import mediapipe as mp
 import numpy as np
-import csv
 import joblib
 import pandas as pd
 import threading
 import subprocess
-import platform
+import shutil
 from xgboost import XGBClassifier
-from datetime import datetime
 from utils import detect_down, detect_up, in_hoop_region, clean_hoop_pos, clean_ball_pos, get_device, score, calculate_angle, calculate_distance
 
 
@@ -21,7 +19,8 @@ class ShotDetector:
         self.class_names = ['Basketball', 'Basketball Hoop']
         self.device = get_device()
 
-        self.cap = cv2.VideoCapture("20251210_110054 (1).mp4")
+        # self.cap = cv2.VideoCapture(0) 
+        self.cap = cv2.VideoCapture("test.mp4")
         self.ball_pos = []
         self.hoop_pos = []
         self.frame_count = 0
@@ -106,16 +105,12 @@ class ShotDetector:
         ]
         self.pose_points = {}
 
-        # Data tracking for CSV export
-        self.shot_data = []
+        # Data tracking for per-shot metrics
         self.current_shot_frames = []
 
         # Track if currently tracking a shot
         self.tracking_shot = False
         self.shot_start_frame = 0
-
-        # Store polynomial arc points
-        self.predicted_arc = None
 
         self.run()
 
@@ -165,7 +160,6 @@ class ShotDetector:
             self.shot_detection()
             self.display_score()
             self.display_xgb_prediction()
-            self.display_arc()
 
             if self.shot_cooldown > 0:
                 self.shot_cooldown -= 1
@@ -178,7 +172,6 @@ class ShotDetector:
 
         self.cap.release()
         cv2.destroyAllWindows()
-        # self.export_to_csv()
 
     # ------------------------------------------------------------------
     # Frame data builder
@@ -238,7 +231,7 @@ class ShotDetector:
         self.speak_prediction(prob)
 
     def speak_prediction(self, prob):
-        """Speak prediction using PowerShell speech synthesis in a background thread."""
+        """Speak prediction using eSpeak in a background thread."""
         if not self.tts_enabled:
             return
 
@@ -252,18 +245,28 @@ class ShotDetector:
 
         def _speak():
             try:
-                system = platform.system()
-                if system == "Windows":
-                    subprocess.run(
-                        ["powershell", "-Command",
-                         f"Add-Type -AssemblyName System.Speech; "
-                         f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{phrase}')"],
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                elif system == "Darwin":  # macOS
-                    subprocess.run(["say", phrase])
-                else:  # Linux
-                    subprocess.run(["espeak", phrase])
+                tts_cmd = None
+                candidates = [
+                    "espeak-ng",
+                    "espeak",
+                    r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+                    r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+                    r"C:\Program Files\eSpeak\command_line\espeak.exe",
+                    r"C:\Program Files (x86)\eSpeak\command_line\espeak.exe",
+                ]
+
+                for candidate in candidates:
+                    resolved = shutil.which(candidate)
+                    if resolved:
+                        tts_cmd = resolved
+                        break
+
+                if tts_cmd is None:
+                    print("[TTS] eSpeak not found. Install espeak-ng or espeak and ensure it is in PATH.")
+                    return
+
+                print(f"[TTS] Speaking '{phrase}' via: {tts_cmd}")
+                subprocess.run([tts_cmd, "-a", "180", "-s", "160", phrase], check=False)
             except Exception as e:
                 print(f"[TTS] Speech failed: {e}")
 
@@ -555,10 +558,6 @@ class ShotDetector:
                 self.predict_shot(early_metrics)
                 self.early_prediction_done = True
 
-        # Continuously update polynomial curve while in flight
-        if self.up and not self.down:
-            self.calculate_predicted_arc()
-
         # Detect ball in 'down' region — this is the moment of release confirmation,
         # so we run the XGBoost prediction here while we have a full arc of frames.
         if self.up and not self.down:
@@ -601,22 +600,6 @@ class ShotDetector:
 
                 self.fade_counter = self.fade_frames
 
-                # Reuse cached metrics from release time
-                shot_metrics = self._pending_metrics if self._pending_metrics else self.calculate_shot_metrics()
-                shot_record = {
-                    'shot_number': self.attempts,
-                    'result': 'make' if is_make else 'miss',
-                    'xgb_make_prob': round(self.xgb_prediction_prob, 4) if self.xgb_prediction_prob is not None else None,
-                    'start_frame': self.shot_start_frame,
-                    'up_frame': self.up_frame,
-                    'down_frame': self.down_frame,
-                    'eval_frame': self.frame_count,
-                    'duration_frames': self.frame_count - self.shot_start_frame,
-                    'duration_seconds': (self.frame_count - self.shot_start_frame) / 30.0,
-                }
-                shot_record.update(shot_metrics)
-                self.shot_data.append(shot_record)
-
                 # Reset state
                 self.up = False
                 self.down = False
@@ -626,86 +609,11 @@ class ShotDetector:
                 self.current_shot_frames = []
                 self._pending_metrics = {}
                 self.early_prediction_done = False
-                self.predicted_arc = None
                 self.last_spoken_prediction = ""
 
     # ------------------------------------------------------------------
     # Display helpers
     # ------------------------------------------------------------------
-
-    def calculate_predicted_arc(self):
-        """Fit a polynomial to recent ball positions and predict path to hoop."""
-        # Grab ball pos from after release point
-        recent_balls = [b[0] for b in self.ball_pos if b[1] >= self.up_frame]
-        
-        # Need at least a few points to fit a reliable curve
-        if len(recent_balls) < 4:
-            self.predicted_arc = None
-            return
-
-        x_coords = [p[0] for p in recent_balls]
-        y_coords = [p[1] for p in recent_balls]
-
-        # Prevent NumPy polyfit RankWarning or errors if all x's are the same
-        if max(x_coords) - min(x_coords) < 10:
-            self.predicted_arc = None
-            return
-
-        try:
-            coeffs = np.polyfit(x_coords, y_coords, 2)
-            poly = np.poly1d(coeffs)
-
-            if len(self.hoop_pos) == 0:
-                self.predicted_arc = None
-                return
-                
-            hoop_x = self.hoop_pos[-1][0][0]
-            current_x = x_coords[-1]
-            
-            # Predict slightly past the hoop
-            step = 15 if hoop_x > current_x else -15
-            target_x = hoop_x + step * 2
-            
-            if step == 0:
-                self.predicted_arc = None
-                return
-
-            points = []
-            for px in range(current_x, target_x + step, step):
-                py = int(poly(px))
-                # Break if prediction goes crazy (e.g. out of frame bounds)
-                if py < -1000 or py > (self.frame.shape[0] if self.frame is not None else 2000) + 1000:
-                    break
-                points.append([px, py])
-
-            if len(points) > 1:
-                self.predicted_arc = np.array(points, np.int32).reshape((-1, 1, 2))
-            else:
-                self.predicted_arc = None
-        except Exception as e:
-            print(f"[Arc Prediction] Error: {e}")
-            self.predicted_arc = None
-
-    def display_arc(self):
-        """Draw the predicted arc on screen with a dashed, glowing style."""
-        if self.predicted_arc is None or self.frame is None:
-            return
-
-        pts = self.predicted_arc.reshape(-1, 2)
-        if len(pts) < 2:
-            return
-
-        # Draw a subtle glow behind the arc
-        cv2.polylines(self.frame, [self.predicted_arc], isClosed=False,
-                      color=(0, 100, 140), thickness=8, lineType=cv2.LINE_AA)
-        # Main arc line
-        cv2.polylines(self.frame, [self.predicted_arc], isClosed=False,
-                      color=(0, 220, 255), thickness=3, lineType=cv2.LINE_AA)
-
-        # Small circle at the predicted landing point
-        end_pt = tuple(pts[-1])
-        cv2.circle(self.frame, end_pt, 8, (0, 220, 255), 2, cv2.LINE_AA)
-        cv2.circle(self.frame, end_pt, 3, (0, 220, 255), -1, cv2.LINE_AA)
 
     def display_score(self):
         """Draw a translucent HUD bar at the top with score and shooting %."""
@@ -774,40 +682,6 @@ class ShotDetector:
                         badge_thickness, cv2.LINE_AA)
 
             self.fade_counter -= 1
-
-    # ------------------------------------------------------------------
-    # CSV export
-    # ------------------------------------------------------------------
-
-    def export_to_csv(self):
-        import os
-
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        if self.shot_data:
-            shot_csv = 'all_shots.csv'
-            file_exists = os.path.isfile(shot_csv)
-
-            for shot in self.shot_data:
-                shot['session_id'] = session_id
-                shot['session_timestamp'] = timestamp
-
-            with open(shot_csv, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=self.shot_data[0].keys())
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerows(self.shot_data)
-
-            print(f"Shot data appended to {shot_csv}")
-            print(f"Session: {session_id}")
-            print(f"Shots this session: {len(self.shot_data)}")
-            print(f"Makes: {self.makes}")
-            if self.attempts > 0:
-                print(f"Shooting percentage: {self.makes / self.attempts * 100:.1f}%")
-
-        print("\n=== Export Complete ===")
-
 
 if __name__ == "__main__":
     ShotDetector()
