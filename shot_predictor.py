@@ -198,7 +198,7 @@ class ShotDetector:
             # show the frame
             cv2.imshow('Frame', self.frame)
             # press 'q' to quit the video
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(60) & 0xFF == ord('q'):
                 break
         # release the video capture and close all windows
         self.cap.release()
